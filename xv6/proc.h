@@ -1,3 +1,4 @@
+
 // Segments in proc->gdt.
 #define NSEGS     7
 
@@ -69,11 +70,13 @@ struct proc {
   uint uid;                    // the process's user id
   uint gid;                    // the process's group id
   uint cpu_ticks_total;        // total elapsed ticks in CPU
-  uint cpu_ticks_in;           // ticks when scheduled 
+  uint cpu_ticks_in;           // ticks when scheduled
+#ifdef CS333_P3
   struct proc *next;
   int priority;
+  int budget;
+#endif
 };
-
 
 // Process memory is laid out contiguously, low addresses first:
 //   text

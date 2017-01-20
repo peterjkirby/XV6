@@ -265,6 +265,7 @@ void
 consoleintr(int (*getc)(void))
 {
   int c, doprocdump = 0;
+  int dopldump = 0;
 
   acquire(&cons.lock);
   while ((c = getc()) >= 0) {
@@ -285,6 +286,11 @@ consoleintr(int (*getc)(void))
         consputc(BACKSPACE);
       }
       break;
+#ifdef CS333_P3
+    case C('G'):
+      dopldump = 1;
+      break;
+#endif
     default:
       if (c != 0 && input.e-input.r < INPUT_BUF) {
         c = (c == '\r') ? '\n' : c;
@@ -298,10 +304,18 @@ consoleintr(int (*getc)(void))
       break;
     }
   }
+
   release(&cons.lock);
   if (doprocdump) {
     procdump();  // now call procdump() wo. cons.lock held
   }
+#ifdef CS333_P3
+  else if (dopldump) {
+
+    pldump();
+  }
+#endif
+
 }
 
 int

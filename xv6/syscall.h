@@ -34,5 +34,11 @@
 #define SYS_setgid	SYS_setuid+1
 #define SYS_getprocs SYS_setgid+1
 
+
 // @version 1.3
 #define SYS_setpriority SYS_getprocs+1
+
+// @version 1.4
+#define SYS_chown SYS_setpriority+1
+#define SYS_chgrp SYS_chown+1
+#define SYS_chmod SYS_chgrp+1

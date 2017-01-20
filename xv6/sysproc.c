@@ -176,3 +176,21 @@ sys_getprocs(void)
   return getprocs((uint)max, utable);
 }
 
+#ifdef CS333_P3
+// @version 1.3
+int
+sys_setpriority(void)
+{
+  int pid;
+  int priority;
+
+  if (argint(0, &pid) < 0)
+    return -1;
+
+  if (argint(1, &priority) < 0)
+    return -1;
+
+  return setpriority(pid, priority);
+}
+#endif
+

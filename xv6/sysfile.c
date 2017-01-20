@@ -84,6 +84,7 @@ sys_write(void)
 
   if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argptr(1, &p, n) < 0)
     return -1;
+
   return filewrite(f, p, n);
 }
 
@@ -261,6 +262,7 @@ create(char *path, short type, short major, short minor)
   ip->major = major;
   ip->minor = minor;
   ip->nlink = 1;
+
   iupdate(ip);
 
   if(type == T_DIR){  // Create . and .. entries.
@@ -397,9 +399,11 @@ sys_exec(void)
   int i;
   uint uargv, uarg;
 
+
   if(argstr(0, &path) < 0 || argint(1, (int*)&uargv) < 0){
     return -1;
   }
+
   memset(argv, 0, sizeof(argv));
   for(i=0;; i++){
     if(i >= NELEM(argv))
@@ -413,6 +417,7 @@ sys_exec(void)
     if(fetchstr(uarg, &argv[i]) < 0)
       return -1;
   }
+
   return exec(path, argv);
 }
 
@@ -439,3 +444,130 @@ sys_pipe(void)
   fd[1] = fd1;
   return 0;
 }
+
+
+#ifdef CS333_P4
+
+int
+sys_chown(void)
+{
+
+  char *path;
+  int uid;
+  struct inode *ip;
+
+  if(argstr(1, &path) < 0 || argint(0, &uid) < 0)
+    return EINVAL;
+
+  if (uid < 0 || 32767 < uid)
+    return EINVAL;
+
+  begin_op();
+
+  if((ip = namei(path)) == 0){
+    end_op();
+    return ENOENT;
+  }
+  ilock(ip);
+
+  ip->uid = uid;
+
+  iupdate(ip);
+  iunlockput(ip);
+  end_op();
+
+
+  return 0;
+}
+
+int
+sys_chgrp(void)
+{
+  char *path;
+  int gid;
+  struct inode *ip;
+
+  if(argstr(1, &path) < 0 || argint(0, &gid) < 0)
+     return EINVAL;
+
+  if (gid < 0 || 32767 < gid)
+    return EINVAL;
+
+  begin_op();
+
+  if((ip = namei(path)) == 0){
+    end_op();
+    return ENOENT;
+  }
+  ilock(ip);
+
+  ip->gid = gid;
+
+  iupdate(ip);
+  iunlockput(ip);
+  end_op();
+
+
+  return 0;
+}
+
+// expected arguments chmod(modeStr, path)
+// where modeStr is a 4-character octal representation of a files permission's and
+// path is the file's path
+//
+// additionally, the first character of modeStr can only be values 0 and 1. Thus, modeStr should have the form:
+// [0-1][0-7][0-7][0-7]
+int
+sys_chmod(void)
+{
+  char c;
+  char *path;
+  char *modeStr;
+  uint mode;
+
+  struct inode *ip;
+  if(argstr(0, &modeStr) < 0 || argstr(1, &path) < 0)
+    return EINVAL;
+
+  mode = 0;
+  char* p = modeStr;
+
+
+  // ensure first character is either a 0 or 1
+  c = *p;
+  if (c != '0' && c != '1')
+    return EINVAL;
+
+  while (*p) {
+    c = *p;
+    // bad argument
+    if (c < '0' || c > '7')
+      return EINVAL;
+
+    mode *= 8;
+    mode += c - '0';
+    p++;
+  }
+
+  begin_op();
+
+  if((ip = namei(path)) == 0){
+    end_op();
+    return ENOENT;
+  }
+  ilock(ip);
+
+
+  ip->mode.asInt &= ~0xFFF;
+  ip->mode.asInt |= mode;
+
+
+  iupdate(ip);
+  iunlockput(ip);
+  end_op();
+
+
+  return 0;
+}
+
+#endif

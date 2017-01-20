@@ -230,6 +230,16 @@ ialloc(ushort type)
   din.type = xshort(type);
   din.nlink = xshort(1);
   din.size = xint(0);
+
+#ifdef CS333_P4
+  din.gid = DEFAULT_GID;
+  din.uid = DEFAULT_UID;
+  if (type == T_FILE)
+    din.mode.asInt = DEFAULT_MKFS_P_FILE_MODE;
+  else
+    din.mode.asInt = DEFAULT_MKFS_P_DIR_MODE;
+#endif
+
   winode(inum, &din);
   return inum;
 }

@@ -111,6 +111,15 @@ extern int sys_setuid(void);
 extern int sys_setgid(void);
 extern int sys_getprocs(void);
 
+
+// @version 1.3
+extern int sys_setpriority(void);
+
+// @version 1.4
+extern int sys_chown(void);
+extern int sys_chgrp(void);
+extern int sys_chmod(void);
+
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
 [SYS_exit]    sys_exit,
@@ -141,7 +150,14 @@ static int (*syscalls[])(void) = {
 [SYS_setuid]  sys_setuid,
 [SYS_setgid]  sys_setgid,
 [SYS_getprocs] sys_getprocs,
+#ifdef CS333_P3
 [SYS_setpriority] sys_setpriority,
+#endif
+#ifdef CS333_P4
+[SYS_chown]   sys_chown,
+[SYS_chgrp]   sys_chgrp,
+[SYS_chmod]   sys_chmod,
+#endif
 };
 
 #ifdef PRINT_SYSCALLS

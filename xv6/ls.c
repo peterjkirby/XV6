@@ -3,6 +3,10 @@
 #include "user.h"
 #include "fs.h"
 
+#ifdef CS333_P4
+#include "print_mode.c"
+#endif
+
 char*
 fmtname(char *path)
 {
@@ -40,10 +44,19 @@ ls(char *path)
     close(fd);
     return;
   }
-  
+
+#ifdef CS333_P4
+  pkprintf(1, "%-10%s %-15%s %-4%s %-4%s %-6%s %-8%s\n", "Mode", "Name", "uid", "gid", "inode", "size");
+#endif
+
   switch(st.type){
   case T_FILE:
+#ifdef CS333_P4
+    print_mode(&st);
+    pkprintf(1, " %-15%s %-4%d %-4%d %-6%d %-8%d\n", fmtname(path), st.uid, st.gid, st.ino, st.size);
+#else
     printf(1, "%s %d %d %d\n", fmtname(path), st.type, st.ino, st.size);
+#endif
     break;
   
   case T_DIR:
@@ -63,7 +76,14 @@ ls(char *path)
         printf(1, "ls: cannot stat %s\n", buf);
         continue;
       }
+
+#ifdef CS333_P4
+      print_mode(&st);
+      pkprintf(1, " %-15%s %-4%d %-4%d %-6%d %-8%d\n", fmtname(buf), st.uid, st.gid, st.ino, st.size);
+#else
       printf(1, "%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
+#endif
+
     }
     break;
   }

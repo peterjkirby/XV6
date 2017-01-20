@@ -10,6 +10,9 @@ struct uproc {
 	char state[STRMAX];
   uint size;
   char name[STRMAX];
+#ifdef CS333_P3
   int priority;
+	int budget;
+#endif
 };
 

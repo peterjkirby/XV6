@@ -8,6 +8,9 @@ struct file {
   uint off;
 };
 
+#ifdef CS333_P4
+union mode_t;
+#endif
 
 // in-memory copy of an inode
 struct inode {
@@ -20,6 +23,13 @@ struct inode {
   short major;
   short minor;
   short nlink;
+
+#ifdef CS333_P4
+  ushort uid;
+  ushort gid;
+  union mode_t mode;
+#endif
+
   uint size;
   uint addrs[NDIRECT+1];
 };

@@ -12,23 +12,31 @@
 #define TICKS_TO_SEC(X,Y) (((X)-(Y)) / (100))
 #define TICKS_TO_PARTIAL_SEC(X,Y) (((X)-(Y))%100)
 
-// @version 1.2
-#define DEFAULT_UID 1
-#define DEFAULT_GID 1
-
 // @version 1.3
-#define NUM_READY_LIST 1
+#define NUM_READY_LIST (MAX_PRIORITY + 1)
 #define DEFAULT_PROC_PRI 0
-#define TICKS_TO_PROMOTE 100
+#define BASE_BUDGET 100
+#define BUDGET_FACTOR 1
 
+#define TICKS_TO_PROMOTE 5000
+
+#ifdef CS333_P3
+struct proclist {
+  struct proc *head;
+  struct proc *tail;
+};
+#endif
 
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
-  struct proc *pReadyList[NUM_READY_LIST];
-  struct proc *pFreeList;
+#ifdef CS333_P3
+  struct proclist pFreeList;
+  struct proclist pReadyQueue[NUM_READY_LIST];
   uint promoteAtTime;
+#endif
 } ptable;
+
 
 static struct proc *initproc;
 
@@ -38,12 +46,30 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
-static void rl_enqueue(int qid, struct proc*);
-static struct proc* rl_dequeue(int qid);
 
-static void fl_push(struct proc*);
-static struct proc* fl_pop();
-static void priority_promote();
+#ifdef CS333_P3
+// free list
+static void freeListInit();
+static void freeListAdd(struct proc *p);
+static int freeListRemove(struct proc **p);
+
+
+// ready queue
+static void readyQueueInit();
+static void readyQueueEnqueue(int, struct proc*);
+static struct proc* readyQueueDequeue(int);
+
+
+// mlfq scheduler
+static void mlfqBudget(struct proc*);
+static void mlfqDemote(struct proc*);
+static void mlfqEnqueue(struct proc*);
+static int mlfqDequeue(struct proc**);
+static void mlfqPromote();
+static int mlfqIsPromoteTime();
+static void mlfqAge(struct proc*);
+static void mlfqShuffle();
+#endif
 
 void
 pinit(void)
@@ -68,12 +94,9 @@ allocproc(void)
       goto found;
   release(&ptable.lock);
   return 0;
-#endif
-
-#ifdef CS333_P3
+#else
   acquire(&ptable.lock);
-  p = fl_pop();
-  if (p)
+  if (freeListRemove(&p))
     goto found;
   release(&ptable.lock);
   return 0;
@@ -82,6 +105,10 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+#ifdef CS333_P3
+  p->priority = DEFAULT_PROC_PRI;
+  mlfqBudget(p);
+#endif
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -109,69 +136,16 @@ found:
   p->cpu_ticks_in = 0;
   p->cpu_ticks_total = 0;
 
+#ifdef CS333_P3
+  // @version 1.3
+  p->next = 0;
+#endif
+
   // @version 1.1
   acquire(&tickslock);
   p->start_ticks = ticks;
   release(&tickslock);
 
-  // @version 1.3
-  p->next = 0;
-  p->priority = DEFAULT_PROC_PRI;
-  return p;
-}
-
-static void
-rl_enqueue(int qid, struct proc* p)
-{
-  //cprintf("rl_enqueue %s\n", p->name);
-  //p->next = ptable.pReadyList[qid];
-  //ptable.pReadyList[qid] = p;
-  
-  struct proc *n;
-  n = ptable.pReadyList[qid];
-  if (!n) {
-    ptable.pReadyList[qid] = p;
-  } else {
-    while (n->next)
-      n = n->next;
-
-    n->next = p;
-  }
-
-}
-
-static struct proc*
-rl_dequeue(int qid)
-{
-  struct proc *p;
-  p = ptable.pReadyList[qid];
-
-  if (p) {
-    ptable.pReadyList[qid] = p->next;
-    p->next = 0;
-  }
-
-
-
-  return p;
-}
-
-static void
-fl_push(struct proc *p)
-{
-
-  p->next = ptable.pFreeList;
-  ptable.pFreeList = p;
-
-}
-
-static struct proc*
-fl_pop()
-{
-  struct proc *p;
-  p = ptable.pFreeList;
-  // TODO check for error here (when pFreeList is empty)
-  ptable.pFreeList = p->next;
 
   return p;
 }
@@ -183,14 +157,11 @@ userinit(void)
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
-  for (p = ptable.proc; p < &ptable.proc[NPROC]; ++p)
-    fl_push(p);
+#ifdef CS333_P3
+  freeListInit();
+  readyQueueInit();
+#endif
 
-  int rlIdx;
-  for (rlIdx = 0; rlIdx < NUM_READY_LIST; ++rlIdx)
-    ptable.pReadyList[rlIdx] = 0;
-
-  ptable.promoteAtTime = 0;
   p = allocproc();
   initproc = p;
   if ((p->pgdir = setupkvm()) == 0)
@@ -215,7 +186,13 @@ userinit(void)
   p->parent = p; // parent of first process is itself
 
   p->state = RUNNABLE;
-  ptable.pReadyList[0] = p;
+#ifdef CS333_P3
+  acquire(&ptable.lock);
+  ptable.promoteAtTime = TICKS_TO_PROMOTE;
+  mlfqEnqueue(p);
+  release(&ptable.lock);
+#endif
+
 }
 
 // Grow current process's memory by n bytes.
@@ -278,14 +255,13 @@ fork(void)
 
   pid = np->pid;
 
-  cprintf("forked: %s \n", np->name);
+  //cprintf("forked: %s \n", np->name);
   // lock to force the compiler to emit the np->state write last.
   acquire(&ptable.lock);
   np->state = RUNNABLE;
-
-
-  rl_enqueue(0, np);
-
+#ifdef CS333_P3
+  mlfqEnqueue(np);
+#endif
   release(&ptable.lock);
 
   return pid;
@@ -363,6 +339,10 @@ wait(void)
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
+#ifdef CS333_P3
+        // @version 1.3
+        freeListAdd(p);
+#endif
         release(&ptable.lock);
         return pid;
       }
@@ -435,7 +415,6 @@ scheduler(void)
 {
 
   struct proc *p;
-  int cur_ticks;
 
   for (;;) {
     // Enable interrupts on this processor.
@@ -443,56 +422,33 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    
-	if (cpu->id == 0) {
-		// @version 1.3
-		// TODO can I just grab the value of ticks here once, rather than here
-		// and below? If mutli-cpu, value may change between here and below. Also,
-		// can this scheduler be interrupted? ASK MM
-		acquire(&tickslock);
-		cur_ticks = ticks;
-		release(&tickslock);
-	
-		if (ptable.promoteAtTime <= cur_ticks)
-			priority_promote();
-	}
 
-	
-	
+    // @version 1.3
+    if (mlfqIsPromoteTime())
+      mlfqPromote();
 
 
-    p = rl_dequeue(0);
-    if (p) {
+    if (mlfqDequeue(&p)) {
 
-      // TODO remove in prod
-      if (p->state != RUNNABLE)
-        panic("Invalid p state in scheduler\n");
-
-	  
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
       proc = p;
       switchuvm(p);
       p->state = RUNNING;
-      
+
       acquire(&tickslock);
-      cur_ticks = ticks;
+      p->cpu_ticks_in = ticks;
       release(&tickslock);
-      p->cpu_ticks_in = cur_ticks;
 
       swtch(&cpu->scheduler, proc->context);
       switchkvm();
 
-      
-      //cprintf("after run, proc->state is %d\n", p->state);
-      if (p->state == RUNNABLE)
-        rl_enqueue(0, p);
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
+      //if (p->state == RUNNABLE)
+      //  mlfqEnqueue(p);
+
       proc = 0;
     }
-   
+
+
+
 
     release(&ptable.lock);
 
@@ -500,34 +456,7 @@ scheduler(void)
 }
 #endif
 
-// reprioritizes all of the processes in ptable
-// assumes that a lock on ptable is already held and 
-// will not be released for the duration of this method
-static void
-priority_promote() 
-{
-	int cur_ticks;
-	int i;
-	struct proc *p;
 
-	for(i = 0; i < NUM_READY_LIST; ++i) {
-		p = ptable.pReadyList[i];		
-		
-		while (p) {
-			if (0 < p->priority)
-				--p->priority;
-			p = p->next;
-		}
-	}
-
-	// schedule the next reprioritization
-	acquire(&tickslock);
-	cur_ticks = ticks;
-	release(&tickslock);
-
-	ptable.promoteAtTime = cur_ticks + TICKS_TO_PROMOTE;
-	
-}
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state.
@@ -535,7 +464,7 @@ void
 sched(void)
 {
   int intena;
-  int cur_ticks;
+
 
   if (!holding(&ptable.lock))
     panic("sched ptable.lock");
@@ -547,11 +476,20 @@ sched(void)
     panic("sched interruptible");
   intena = cpu->intena;
 
+
   acquire(&tickslock);
-  cur_ticks = ticks;
+
+  proc->cpu_ticks_total += (ticks - proc->cpu_ticks_in);
+
+#ifdef CS333_P3
+  mlfqAge(proc);
+#endif
+
   release(&tickslock);
 
-  proc->cpu_ticks_total += (cur_ticks - proc->cpu_ticks_in);
+  //if (proc->state == RUNNABLE)
+  //  mlfqEnqueue(proc);
+
   swtch(&proc->context, cpu->scheduler);
   cpu->intena = intena;
 }
@@ -562,6 +500,9 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   proc->state = RUNNABLE;
+#ifdef CS333_P3
+  mlfqEnqueue(proc);
+#endif
   sched();
   release(&ptable.lock);
 }
@@ -634,7 +575,9 @@ wakeup1(void *chan)
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if (p->state == SLEEPING && p->chan == chan) {
       p->state = RUNNABLE;
-      rl_enqueue(0, p);
+#ifdef CS333_P3
+      mlfqEnqueue(p);
+#endif
     }
 }
 
@@ -660,8 +603,12 @@ kill(int pid)
     if (p->pid == pid) {
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if (p->state == SLEEPING)
+      if (p->state == SLEEPING) {
         p->state = RUNNABLE;
+#ifdef CS333_P3
+        mlfqEnqueue(p);
+#endif
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -708,9 +655,9 @@ procdump(void)
   static char *states[] = {
     [UNUSED]    "unused",
     [EMBRYO]    "embryo",
-    [SLEEPING]  "sleep ",
+    [SLEEPING]  "sleep",
     [RUNNABLE]  "runnable",
-    [RUNNING]   "run   ",
+    [RUNNING]   "running",
     [ZOMBIE]    "zombie"
   };
   int i;
@@ -723,8 +670,12 @@ procdump(void)
   cur_ticks = ticks;
   release(&tickslock);
 
-
+#ifdef CS333_P3
+  cprintf("\n%-5%s %-5%s %-5%s %-5%s %-5%s %-5%s %-10%s %-20%s %-15%s %-15%s %s \n", "PID", "PPID", "UID", "GID", "Pri", "Budget", "State", "Name", "Elapsed (s)", "CPU Time (s)", "PCs");
+#else
   cprintf("\n%-5%s %-5%s %-5%s %-5%s %-10%s %-20%s %-15%s %-15%s %s \n", "PID", "PPID", "UID", "GID", "State", "Name", "Elapsed (s)", "CPU Time (s)", "PCs");
+#endif
+
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
     if (p->state == UNUSED)
       continue;
@@ -733,6 +684,18 @@ procdump(void)
     else
       state = "???";
 
+#ifdef CS333_P3
+    cprintf("%-5%d %-5%d %-5%d %-5%d %-5%d %-5%d %-10%s %-20%s ",
+            p->pid,
+            p->parent->pid,
+            p->uid,
+            p->gid,
+            p->priority,
+            p->budget,
+            state,
+            p->name);
+#else
+
     cprintf("%-5%d %-5%d %-5%d %-5%d %-10%s %-20%s ",
             p->pid,
             p->parent->pid,
@@ -740,6 +703,7 @@ procdump(void)
             p->gid,
             state,
             p->name);
+#endif
 
     print_float(TICKS_TO_SEC(cur_ticks, p->start_ticks),
                 TICKS_TO_PARTIAL_SEC(cur_ticks, p->start_ticks));
@@ -822,8 +786,11 @@ getprocs(uint max, struct uproc *utable)
     up->gid = p->gid;
     up->pid = p->pid;
     up->uid = p->uid;
+#ifdef CS333_P3
     up->priority = p->priority;
-	up->ppid = p->parent->pid;
+    up->budget = p->budget;
+#endif
+	  up->ppid = p->parent->pid;
     up->elapsed_ticks = cur_ticks - p->start_ticks;
     up->CPU_total_ticks = p->cpu_ticks_total;
     up->size = p->sz;
@@ -848,3 +815,385 @@ getprocs(uint max, struct uproc *utable)
   return used;
 }
 
+#ifdef CS333_P3
+int
+setpriority(int pid, int priority)
+{
+  // TODO
+  // validate
+  // return error if one exists
+  int found;
+  struct proc *p;
+
+  if (priority < 0 || NUM_READY_LIST <= priority)
+    return 1;
+
+  if (pid < 0 || NPROC <= pid)
+    return 1;
+
+  acquire(&ptable.lock);
+
+  found = 0;
+  for (p = ptable.proc; p < &ptable.proc[NPROC] && !found; p++) {
+    if (p->pid == pid) {
+      p->priority = priority;
+      mlfqBudget(p);
+      // only if it is already a ready queue do we need to shuffle to ensure
+      // it moves to the right ready queue.
+      if (p->state == RUNNABLE)
+        mlfqShuffle();
+      found = 1;
+    }
+  }
+  release(&ptable.lock);
+
+
+
+
+  return found == 0;
+}
+
+
+
+
+static void
+freeListAdd(struct proc *p)
+{
+  if (!holding(&ptable.lock))
+    panic("In freeListAdd but ptable lock is not held \n");
+
+  if (p->state != UNUSED)
+    panic("Attempted to add a process to freeList whose state is not UNUSED\n");
+
+  p->next = ptable.pFreeList.head;
+  ptable.pFreeList.head = p;
+
+  if (!ptable.pFreeList.tail)
+    ptable.pFreeList.tail = p;
+
+}
+
+static int
+freeListRemove(struct proc **p)
+{
+  if (!holding(&ptable.lock))
+    panic("In freeListAdd but ptable lock is not held \n");
+
+  *p = ptable.pFreeList.head;
+
+  if (*p) {
+    ptable.pFreeList.head = (*p)->next;
+    (*p)->next = 0;
+    if (!ptable.pFreeList.head)
+      ptable.pFreeList.tail = 0;
+    return 1;
+  }
+
+  return 0;
+}
+
+static void
+freeListInit()
+{
+  struct proc *p;
+  if (holding(&ptable.lock))
+    panic("TODO");
+
+  acquire(&ptable.lock);
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; ++p)
+    freeListAdd(p);
+
+  release(&ptable.lock);
+}
+
+static void
+readyQueueInit()
+{
+  struct proclist *list;
+  int i;
+
+  if (holding(&ptable.lock))
+    panic("TODO");
+
+  acquire(&ptable.lock);
+
+  for (i = 0; i < NUM_READY_LIST; ++i) {
+    list = &ptable.pReadyQueue[i];
+    list->head = list->tail = 0;
+  }
+
+  release(&ptable.lock);
+}
+
+// Adds a process to a specific ready list queue
+// Preconditions:
+// 1) ptable.lock must be held
+// 2) the process state must be RUNNABLE
+// 3) p->next = 0
+//
+// qid must be a valid queue in the range 0 <= qid < NUM_READY_LIST
+static void
+readyQueueEnqueue(int qid, struct proc *p)
+{
+  if (!holding(&ptable.lock))
+    panic("In freeListAdd but ptable lock is not held \n");
+
+  if (p->state != RUNNABLE)
+    panic("Attempted to add a process to the ready list whose state was not RUNNABLE\n");
+
+  if (qid < 0 || NUM_READY_LIST <= qid)
+    panic("Invalid qid parameter\n");
+
+  struct proclist *list;
+  list = &ptable.pReadyQueue[qid];
+
+  if (!list->head) {
+    list->head = list->tail = p;
+  } else {
+    list->tail->next = p;
+    list->tail = p;
+  }
+
+}
+
+// Removes a process from a specific ready list queue
+// Preconditions:
+// 1) ptable.lock must be held
+//
+// qid must be a valid queue in the range 0 <= qid < NUM_READY_LIST
+//
+// returns 0 if the queue was empty and no process was removed
+static struct proc*
+readyQueueDequeue(int qid)
+{
+  struct proclist *list;
+  struct proc *p;
+
+  if (!holding(&ptable.lock))
+    panic("In freeListAdd but ptable lock is not held \n");
+
+  if (qid < 0 || NUM_READY_LIST <= qid)
+    panic("Invalid qid parameter\n");
+
+
+
+  list = &ptable.pReadyQueue[qid];
+  p = list->head;
+
+  if (p) {
+      list->head = p->next;
+      p->next = 0;
+
+      if (!list->head)
+        list->tail = 0;
+  }
+
+  return p;
+}
+
+static void
+mlfqAge(struct proc *p)
+{
+  if (!holding(&tickslock))
+    panic("mlfqAge requires ticklock to be held\n");
+
+  p->budget -= (ticks - p->cpu_ticks_in);
+}
+
+
+// Returns 1 if its time to promote, 0 otherwise
+static int
+mlfqIsPromoteTime()
+{
+  int cur_ticks;
+
+  acquire(&tickslock);
+  cur_ticks = ticks;
+  release(&tickslock);
+
+  return ptable.promoteAtTime <= cur_ticks;
+}
+
+// Prior to executing, assumes that the processes in the ready queues
+// are in ready queues they don't belong in, given their current priority.
+// This function fixes this problem.
+// After execution, it can be assumed that every process in a ready queue is in
+// the right ready queue.
+//
+// Preconditions:
+// 1) ptable.lock is held
+static void
+mlfqShuffle()
+{
+  struct proclist *list;
+  struct proc *tail;
+  struct proc *p;
+  int i;
+
+  if (!holding(&ptable.lock))
+    panic("mlfqShuffle not holding ptable.lock\n");
+
+  // loop through each ready queue
+  for (i = 0; i < NUM_READY_LIST; ++i) {
+    list = &ptable.pReadyQueue[i];
+    // note the current tail of the queue
+    tail = list->tail;
+    p = readyQueueDequeue(i);
+
+    // so long as there is still a process to dequeue from the particular ready
+    // queue, do so.
+    while (p) {
+      // place the process into the appropriate ready queue
+      readyQueueEnqueue(p->priority, p);
+
+      // so long as the current process is not the original tail of the queue
+      // keep dequeueing from this queue
+      if (p != tail)
+        p = readyQueueDequeue(i);
+      else
+        p = 0; // tail was seen, stop dequeueing
+    }
+
+  }
+
+
+}
+
+// reprioritizes all of the processes in ptable
+// assumes that a lock on ptable is already held and
+// will not be released for the duration of this method
+static void
+mlfqPromote()
+{
+  struct proc *p;
+  if (!holding(&ptable.lock))
+    panic("mlfqPromote not holding ptable.lock \n");
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state == RUNNING || p->state == RUNNABLE || p->state == SLEEPING) {
+      if (0 < p->priority) {
+        --p->priority;
+        mlfqBudget(p);
+      }
+    }
+  }
+
+  mlfqShuffle();
+
+  // schedule the next reprioritization
+  acquire(&tickslock);
+  ptable.promoteAtTime = ticks + TICKS_TO_PROMOTE;
+  release(&tickslock);
+
+}
+
+// Assigns a budget to the process
+//
+// Preconditions
+// 1) ptable.lock must be held
+static void
+mlfqBudget(struct proc *p)
+{
+  int budget;
+
+  if (!holding(&ptable.lock))
+    panic("mlfqBudget not holding ptable.lock \n");
+
+  // The lower priority the queue, the longer the process
+  // will stay there (the larger the budget).
+  budget = BASE_BUDGET + (BUDGET_FACTOR * p->priority * BASE_BUDGET);
+
+  p->budget = budget;
+}
+
+static void
+mlfqDemote(struct proc *p)
+{
+  if (!holding(&ptable.lock))
+    panic("mlfqDemote not holding ptable.lock \n");
+
+  if (p->state != RUNNABLE)
+    panic("mlfqDemote cannot demote a process that is not RUNNABLE\n");
+
+  // if a lower priority queue exists, demote the process to it
+  if (p->priority < (NUM_READY_LIST - 1))
+    ++p->priority;
+
+  // calculate a new budget for the process
+  mlfqBudget(p);
+}
+
+// Adds a process to the mlfq
+// If the process's budget <= 0, then the process
+// will be demoted to a lower priority and a new budget assigned.
+//
+// Preconditions
+// 1) ptable.lock must be held
+// 2) the process state must be RUNNABLE
+static void
+mlfqEnqueue(struct proc *p)
+{
+  if (!holding(&ptable.lock))
+    panic("mlfqEnqueue not holding ptable.lock \n");
+
+  if (p->state != RUNNABLE)
+    panic("mlfqEnqueue attempted to enqueue proc with nonrunnable state \n");
+
+  if (p->budget <= 0)
+    mlfqDemote(p);
+
+  readyQueueEnqueue(p->priority, p);
+}
+
+// Removes the next process to run from the mlfq
+//
+// Preconditions
+// 1) ptable.lock must be held
+//
+// Returns 1 if a process is found, 0 otherwise
+static int
+mlfqDequeue(struct proc **p)
+{
+  int i;
+
+  if (!holding(&ptable.lock))
+    panic("mlfqDequeue not holding ptable.lock \n");
+
+  for (i = 0; i < NUM_READY_LIST; ++i) {
+    *p = readyQueueDequeue(i);
+    if (*p)
+      return 1;
+  }
+
+  return 0;
+}
+
+void pldump()
+{
+
+  acquire(&ptable.lock);
+
+  int i;
+  int size;
+  struct proc *p;
+  cprintf("\nmlfq ready queues\n");
+  for (i = 0; i < NUM_READY_LIST; ++i) {
+    size = 0;
+    p = ptable.pReadyQueue[i].head;
+    cprintf("readyQueue #%d\n", i);
+    while (p) {
+      ++size;
+      cprintf("%d) %d %s\n", size, p->pid, p->name);
+      p = p->next;
+    }
+    if (size == 0)
+      cprintf("--- empty --- \n");
+  }
+
+
+  release(&ptable.lock);
+
+
+}
+#endif

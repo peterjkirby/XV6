@@ -185,6 +185,13 @@ ialloc(uint dev, short type)
     if(dip->type == 0){  // a free inode
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
+
+#ifdef CS333_P4
+      dip->gid = proc->gid;
+      dip->uid = proc->uid;
+      dip->mode.asInt = DEFAULT_P_MODE;
+#endif
+
       log_write(bp);   // mark it allocated on the disk
       brelse(bp);
       return iget(dev, inum);
@@ -206,6 +213,13 @@ iupdate(struct inode *ip)
   dip->type = ip->type;
   dip->major = ip->major;
   dip->minor = ip->minor;
+
+#ifdef CS333_P4
+  dip->gid = ip->gid;
+  dip->uid = ip->uid;
+  dip->mode.asInt = ip->mode.asInt;
+#endif
+
   dip->nlink = ip->nlink;
   dip->size = ip->size;
   memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
@@ -283,6 +297,13 @@ ilock(struct inode *ip)
     ip->type = dip->type;
     ip->major = dip->major;
     ip->minor = dip->minor;
+
+#ifdef CS333_P4
+    ip->gid = dip->gid;
+    ip->uid = dip->uid;
+    ip->mode.asInt = dip->mode.asInt;
+#endif
+
     ip->nlink = dip->nlink;
     ip->size = dip->size;
     memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
@@ -416,6 +437,7 @@ itrunc(struct inode *ip)
   iupdate(ip);
 }
 
+
 // Copy stat information from inode.
 void
 stati(struct inode *ip, struct stat *st)
@@ -425,6 +447,13 @@ stati(struct inode *ip, struct stat *st)
   st->type = ip->type;
   st->nlink = ip->nlink;
   st->size = ip->size;
+
+
+#ifdef CS333_P4
+  st->gid = ip->gid;
+  st->uid = ip->uid;
+  st->mode.asInt = ip->mode.asInt;
+#endif
 }
 
 // Read data from inode.
@@ -643,3 +672,49 @@ nameiparent(char *path, char *name)
 {
   return namex(path, 1, name);
 }
+
+
+#ifdef CS333_P4
+int getsetuid(struct inode *inode)
+{
+  if (inode->mode.flags.setuid)
+    return inode->uid;
+
+  return 0;
+}
+
+int has_permission(struct inode *inode, int mask)
+{
+  uint mode = inode->mode.asInt;
+  /*cprintf("\n mode: %x \n", mode);
+  cprintf("\n proc->uid: %d \n", proc->uid);
+  cprintf("\n proc->gid: %d \n", proc->gid);
+  cprintf("\n mask: %d \n", mask);
+  cprintf("\n inode->gid: %d \n", inode->gid);
+  cprintf("\n inode->uid: %d \n", inode->uid);*/
+  if (mask != P_EXEC && mask != P_WRITE && mask != P_READ) return 0;
+
+  //cprintf("\n has_permission: mode=(%x, %d), mask=(%x,%d)\n", mode, mode, mask, mask);
+  if (proc->uid == inode->uid) {
+    mode >>= 6;
+  } else {
+    if (proc->gid == inode->gid) {
+      mode >>= 3;
+    }
+  }
+
+  //cprintf("\n has_permission after manip: mode=(%x, %d), mask=(%x,%d)\n", mode, mode, mask, mask);
+
+  //cprintf("\n has_permission after calc: ((%d & %d) == %d) => %d\n", mask, mode, mask, ((mask & mode) == mask));
+ /* cprintf("\n mode after shifts: %x \n", mode);
+  cprintf("\n ~mode: %x \n", mode);
+
+  cprintf("\n mask & ~mode: %x \n", mask & mode);*/
+
+  if ((mask & mode) == mask)
+    return 1;
+
+
+  return 0;
+}
+#endif

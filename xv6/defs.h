@@ -10,6 +10,7 @@ struct spinlock;
 struct stat;
 struct superblock;
 
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
@@ -52,6 +53,12 @@ struct inode*   nameiparent(char*, char*);
 int             readi(struct inode*, char*, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, char*, uint, uint);
+
+// @version 1.4
+#ifdef CS333_P4
+int has_permission(struct inode *, int);
+int getsetuid(struct inode *);
+#endif
 
 // ide.c
 void            ideinit(void);
@@ -123,11 +130,13 @@ void            wakeup(void*);
 void            yield(void);
 
 // @version 1.2
-int 			setuid(uint); 
-int 			setgid(uint); 
+int 			setuid(uint);
+int 			setgid(uint);
 int				getprocs(uint, struct uproc*);
 
-
+// @version 1.3
+int             setpriority(int, int);
+void            pldump(void);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -192,3 +201,5 @@ void            clearpteu(pde_t *pgdir, char *uva);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+
+

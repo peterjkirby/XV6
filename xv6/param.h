@@ -11,4 +11,18 @@
 #define LOGSIZE      (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       2000  // size of file system in blocks
+#define MAX_PRIORITY 7
+#define DEFAULT_UID 1
+#define DEFAULT_GID 1
+#define DEFAULT_MKFS_P_DIR_MODE 0644
+#define DEFAULT_MKFS_P_FILE_MODE 0755
+#define DEFAULT_P_MODE 0600
 
+#define P_EXEC 0x00000001
+#define P_WRITE 0x00000002
+#define P_READ 0x00000004
+
+#define EPERM            1      /* Operation not permitted */
+#define ENOENT           2      /* No such file or directory */
+#define EACCES          13      /* Permission denied */
+#define EINVAL          22      /* Invalid argument */

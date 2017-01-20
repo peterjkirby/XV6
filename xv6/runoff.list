@@ -93,3 +93,16 @@ PKprintf.c
 PKproctests.c
 PKpstests.c
 PKetimetests.c
+
+# CS333 Program 3 additions for Peter Kirby
+PKprioritytests.c
+test_sched.c
+
+# CS333 Program 4 additions for Peter Kirby
+PKp4-tests.c
+p4-test.h
+p4-test.c
+testsetuid.c
+chown.c
+chgrp.c
+chmod.c

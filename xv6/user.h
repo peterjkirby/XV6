@@ -37,6 +37,17 @@ int setuid(uint);
 int setgid(uint);
 int getprocs(uint max, struct uproc* table);
 
+
+// @version 1.3
+int setpriority(int, int);
+
+#ifdef CS333_P4
+// @version 1.4
+int chown(int, char *);
+int chgrp(int, char *);
+int chmod(char*, char *);
+#endif
+
 // ulib.c
 int stat(char*, struct stat*);
 char* strcpy(char*, char*);
